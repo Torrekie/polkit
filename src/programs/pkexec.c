@@ -38,6 +38,11 @@
 #include <sys/procctl.h>
 #endif
 
+#ifdef __APPLE__
+#include <signal.h>
+#include <dispatch/dispatch.h>
+#endif
+
 #include <glib/gi18n.h>
 
 #ifdef POLKIT_AUTHFW_PAM
@@ -746,6 +751,24 @@ main (int argc, char *argv[])
       g_printerr ("procctl(2) failed: %s\n", g_strerror (errno));
       goto out;
     }
+#elif defined(__APPLE__)
+  /* emulate prctl(PR_SET_PDEATHSIG, SIGTERM) behavior */
+  dispatch_queue_t queue = dispatch_get_global_queue (DISPATCH_QUEUE_PRIORITY_DEFAULT, 0);
+  dispatch_source_t source = dispatch_source_create (DISPATCH_SOURCE_TYPE_PROC, getppid (), DISPATCH_PROC_EXIT, queue);
+  if (!source)
+    {
+      g_printerr ("dispatch_source_create(DISPATCH_SOURCE_TYPE_PROC, DISPATCH_PROC_EXIT) failed\n");
+      goto out;
+    }
+  dispatch_source_set_event_handler(source, ^{
+    /* Unregister dispatch */
+    dispatch_source_cancel(source);
+    dispatch_release(source);
+    /* SIGTERM self first, otherwise exit */
+    if (kill (getpid (), SIGTERM) == -1) exit(0);
+  });
+
+  dispatch_resume(source);
 #else
 #warning "Please add OS specific code to catch when the parent dies"
 #endif
